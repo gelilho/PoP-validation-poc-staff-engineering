@@ -8,10 +8,10 @@ from __future__ import annotations
 
 def build_extraction_prompt(products: list[str]) -> str:
     """
-    Build the Gemini extraction prompt with the On Running product catalog.
+    Build the Gemini extraction prompt with the [Insert your brand] product catalog.
 
     Args:
-        products: List of official On Running product names for matching.
+        products: List of official [Insert your brand] product names for matching.
 
     Returns:
         Complete prompt string for receipt field extraction.

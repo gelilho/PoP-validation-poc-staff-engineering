@@ -20,8 +20,8 @@ from pop_validation.models import (
 from pop_validation.validation_rules import (
     apply_rules,
     check_ai_generated,
+    check_brand_products,
     check_image_quality,
-    check_on_products,
     check_receipt_found,
     check_receipt_type,
     check_required_fields,
@@ -215,40 +215,40 @@ class TestCheckRetailerDate:
 
 
 # ──────────────────────────────────────────────
-# Rule 7: On Products
+# Rule 7: Brand Products
 # ──────────────────────────────────────────────
 
 
-class TestCheckOnProducts:
+class TestCheckBrandProducts:
     def test_only_other_rejected(self) -> None:
         rf = ReceiptFields(product_counts={"other": 1})
         analysis = _make_analysis(receipt_fields=rf)
-        assert check_on_products(analysis) == "RECEIPT_DOES_NOT_CONTAIN_ON_FOOTWEAR"
+        assert check_brand_products(analysis) == "RECEIPT_DOES_NOT_CONTAIN_BRAND_FOOTWEAR"
 
-    def test_on_product_passes(self) -> None:
+    def test_brand_product_passes(self) -> None:
         rf = ReceiptFields(product_counts={"Cloud 5": 1})
         analysis = _make_analysis(receipt_fields=rf)
-        assert check_on_products(analysis) is None
+        assert check_brand_products(analysis) is None
 
     def test_mixed_products_passes(self) -> None:
         rf = ReceiptFields(product_counts={"Cloud 5": 1, "other": 2})
         analysis = _make_analysis(receipt_fields=rf)
-        assert check_on_products(analysis) is None
+        assert check_brand_products(analysis) is None
 
     def test_none_product_counts_passes(self) -> None:
         rf = ReceiptFields(product_counts=None)
         analysis = _make_analysis(receipt_fields=rf)
-        assert check_on_products(analysis) is None
+        assert check_brand_products(analysis) is None
 
     def test_empty_product_counts_rejected(self) -> None:
         rf = ReceiptFields(product_counts={})
         analysis = _make_analysis(receipt_fields=rf)
         # Empty dict has no non-other keys → rejected
-        assert check_on_products(analysis) == "RECEIPT_DOES_NOT_CONTAIN_ON_FOOTWEAR"
+        assert check_brand_products(analysis) == "RECEIPT_DOES_NOT_CONTAIN_BRAND_FOOTWEAR"
 
     def test_no_receipt_fields_passes(self) -> None:
         analysis = _make_analysis(receipt_fields=None)
-        assert check_on_products(analysis) is None
+        assert check_brand_products(analysis) is None
 
 
 # ──────────────────────────────────────────────
@@ -375,7 +375,7 @@ class TestApplyRules:
         message, _pop_valid, _uncertain = apply_rules(analysis)
         assert message == "UNOFFICIAL_RETAILER"
 
-    def test_no_on_products(self) -> None:
+    def test_no_brand_products(self) -> None:
         rf = ReceiptFields(
             retailer_name="Foot Locker",
             receipt_type="official_receipt_paper",
@@ -383,7 +383,7 @@ class TestApplyRules:
         )
         analysis = _make_analysis(receipt_fields=rf)
         message, _pop_valid, _uncertain = apply_rules(analysis)
-        assert message == "RECEIPT_DOES_NOT_CONTAIN_ON_FOOTWEAR"
+        assert message == "RECEIPT_DOES_NOT_CONTAIN_BRAND_FOOTWEAR"
 
     def test_missing_field_sets_uncertain(self) -> None:
         rf = ReceiptFields(

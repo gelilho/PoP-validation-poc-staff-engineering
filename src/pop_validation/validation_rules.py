@@ -12,7 +12,7 @@ Rule order:
     4. Invalid receipt type
     5. Unofficial retailer (name == "other")
     6. Retailer not official on purchase date (stub — deferred)
-    7. No On Running products found
+    7. No [Insert your brand] products found
     8. Missing required fields (sets uncertain=True)
     9. All pass -> VALID_RECEIPT_FOUND (sets pop_valid=True)
 """
@@ -108,8 +108,8 @@ def check_retailer_date(analysis: ImageAnalysis) -> str | None:
     return None
 
 
-def check_on_products(analysis: ImageAnalysis) -> str | None:
-    """Rule 7: Reject if product_counts contains only 'other' (no On Running products)."""
+def check_brand_products(analysis: ImageAnalysis) -> str | None:
+    """Rule 7: Reject if product_counts contains only 'other' (no [Insert your brand] products)."""
     rf = analysis.receipt_fields
     if rf is None or rf.product_counts is None:
         return None
@@ -117,10 +117,10 @@ def check_on_products(analysis: ImageAnalysis) -> str | None:
     non_other_keys = set(rf.product_counts.keys()) - {"other"}
     if len(non_other_keys) == 0:
         logger.warning(
-            "[{}] Rule 7 TRIGGERED: No On Running products found (only 'other')",
+            "[{}] Rule 7 TRIGGERED: No [Insert your brand] products found (only 'other')",
             analysis.image_index,
         )
-        return "RECEIPT_DOES_NOT_CONTAIN_ON_FOOTWEAR"
+        return "RECEIPT_DOES_NOT_CONTAIN_BRAND_FOOTWEAR"
     return None
 
 
@@ -164,7 +164,7 @@ _RULE_CHAIN = [
     check_receipt_type,  # Rule 4
     check_unofficial_retailer,  # Rule 5
     check_retailer_date,  # Rule 6 (stub)
-    check_on_products,  # Rule 7
+    check_brand_products,  # Rule 7
 ]
 
 

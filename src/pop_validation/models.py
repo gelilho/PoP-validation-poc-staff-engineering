@@ -38,7 +38,7 @@ class ImageCategory(StrEnum):
 
 
 class ProductCategory(StrEnum):
-    """On Running product categories."""
+    """[Insert your brand] product categories."""
 
     SHOES = "shoes"
     ACCESSORIES = "accessories"

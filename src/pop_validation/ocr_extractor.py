@@ -331,7 +331,7 @@ def _infer_product_category(fields: ReceiptFields | None) -> ProductCategory | N
         if any(kw in name_lower for kw in shoe_keywords):
             return ProductCategory.SHOES
 
-    return ProductCategory.SHOES  # Default for On Running
+    return ProductCategory.SHOES  # Default for [Insert your brand]
 
 
 def _get_language(quality: ImageQualityReport, fields: ReceiptFields | None) -> str | None:

@@ -1,7 +1,7 @@
 [project]
 name = "pop-validation-poc"
 version = "1.0.0"
-description = "Proof-of-Purchase validation PoC for On Running warranty claims"
+description = "Proof-of-Purchase validation PoC for [Insert your brand] warranty claims"
 requires-python = ">=3.11"
 
 dependencies = [

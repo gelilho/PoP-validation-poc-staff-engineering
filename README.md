@@ -1,6 +1,6 @@
 # PoP Validation PoC — Proof of Purchase Validation
 
-Staff-engineered rewrite of the On Running Proof of Purchase validation system.
+Staff-engineered rewrite of the [Insert your brand] Proof of Purchase validation system.
 Uses Google Gemini 2.5 Flash for OCR extraction and image quality assessment.
 
 ---

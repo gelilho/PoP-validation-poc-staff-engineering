@@ -63,7 +63,7 @@ BLUR_THRESHOLD: float = 50.0  # Laplacian variance below this = blurry
 
 @lru_cache(maxsize=1)
 def load_products() -> list[str]:
-    """Load the On Running product catalog from bundled JSON."""
+    """Load the [Insert your brand] product catalog from bundled JSON."""
     products_path = Path(__file__).parent / "data" / "products.json"
     logger.debug("Loading product catalog from: {}", products_path)
     with open(products_path) as f:

@@ -1,4 +1,4 @@
-"""PoP Validation PoC — Proof of Purchase validation for On Running warranty claims."""
+"""PoP Validation PoC — Proof of Purchase validation for [Insert your brand] warranty claims."""
 
 from pop_validation.pipeline import PopValidationPipeline
 
