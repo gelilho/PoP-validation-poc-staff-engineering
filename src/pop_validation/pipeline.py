@@ -18,6 +18,7 @@ from pop_validation.models import (
     ValidationResponse,
 )
 from pop_validation.ocr_extractor import OcrExtractor
+from pop_validation.product_catalog import ProductCatalogProvider
 from pop_validation.validation_rules import apply_rules
 
 
@@ -36,10 +37,13 @@ class PopValidationPipeline:
         self,
         settings: Settings | None = None,
         ocr_extractor: OcrExtractor | None = None,
+        product_catalog: ProductCatalogProvider | None = None,
     ) -> None:
         logger.info("Initializing PopValidationPipeline...")
         self._settings = settings or get_settings()
-        self._ocr = ocr_extractor or OcrExtractor(self._settings)
+        self._ocr = ocr_extractor or OcrExtractor(
+            self._settings, product_catalog=product_catalog
+        )
         logger.info("PopValidationPipeline ready")
 
     def validate(self, request: ValidationRequest) -> ValidationResponse:

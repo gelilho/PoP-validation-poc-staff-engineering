@@ -1,4 +1,4 @@
-"""Tests for Gemini OCR extraction with mocked API calls."""
+"""Tests for OcrExtractor orchestration and GeminiClient integration."""
 
 from __future__ import annotations
 
@@ -6,53 +6,20 @@ import json
 from unittest.mock import MagicMock, patch
 
 from pop_validation.config import Settings
-from pop_validation.models import ImageQuality
-from pop_validation.ocr_extractor import OcrExtractor, _parse_enum, _sanitize_fields
+from pop_validation.ocr_extractor import OcrExtractor
 
-
-class TestParseEnum:
-    def test_valid_value(self) -> None:
-        result = _parse_enum("high", ImageQuality)
-        assert result == ImageQuality.HIGH
-
-    def test_invalid_value(self) -> None:
-        result = _parse_enum("garbage", ImageQuality)
-        assert result is None
-
-    def test_none_value(self) -> None:
-        result = _parse_enum(None, ImageQuality)
-        assert result is None
-
-
-class TestSanitizeFields:
-    def test_converts_price_to_float(self) -> None:
-        data = {"price": "149.99", "retailer_name": "Test"}
-        result = _sanitize_fields(data)
-        assert result["price"] == 149.99
-
-    def test_handles_invalid_price(self) -> None:
-        data = {"price": "not-a-number"}
-        result = _sanitize_fields(data)
-        assert result["price"] is None
-
-    def test_preserves_none_price(self) -> None:
-        data = {"price": None}
-        result = _sanitize_fields(data)
-        assert result["price"] is None
-
-    def test_preserves_other_fields(self) -> None:
-        data = {"retailer_name": "Test", "currency": "USD"}
-        result = _sanitize_fields(data)
-        assert result == data
+# ──────────────────────────────────────────────
+# GeminiClient (via OcrExtractor integration)
+# ──────────────────────────────────────────────
 
 
 class TestOcrExtractor:
-    @patch("pop_validation.ocr_extractor.genai")
+    @patch("pop_validation.gemini_client.genai")
     def test_initialization(self, mock_genai: MagicMock, settings: Settings) -> None:
         OcrExtractor(settings)
         mock_genai.configure.assert_called_once_with(api_key=settings.gemini_api_key)
 
-    @patch("pop_validation.ocr_extractor.genai")
+    @patch("pop_validation.gemini_client.genai")
     def test_assess_quality_success(self, mock_genai: MagicMock, settings: Settings) -> None:
         mock_model = MagicMock()
         mock_genai.GenerativeModel.return_value = mock_model
@@ -78,14 +45,14 @@ class TestOcrExtractor:
         img = Image.new("RGB", (100, 100))
         loaded = LoadedImage(data=b"fake", mime_type="image/jpeg", source="test", pil_image=img)
 
-        report = extractor.assess_quality(loaded, 0)
+        report = extractor._step3_quality_assessment(loaded, 0)
         assert report.is_receipt is True
         assert report.is_ai_generated is False
         assert report.rejection_reason is None
 
-    @patch("pop_validation.ocr_extractor.genai")
-    def test_assess_quality_error_returns_default(
-        self, mock_genai: MagicMock, settings: Settings
+    @patch("pop_validation.gemini_client.genai")
+    def test_assess_quality_error_returns_rejection(
+        self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
         mock_model = MagicMock()
         mock_genai.GenerativeModel.return_value = mock_model
@@ -100,12 +67,11 @@ class TestOcrExtractor:
         img = Image.new("RGB", (100, 100))
         loaded = LoadedImage(data=b"fake", mime_type="image/jpeg", source="test", pil_image=img)
 
-        report = extractor.assess_quality(loaded, 0)
-        # On error, rejection_reason is set to prevent wasted extraction calls (cost saved)
+        report = extractor._step3_quality_assessment(loaded, 0)
         assert report.rejection_reason is not None
         assert "QUALITY_ASSESSMENT_FAILED" in report.rejection_reason
 
-    @patch("pop_validation.ocr_extractor.genai")
+    @patch("pop_validation.gemini_client.genai")
     def test_extract_fields_success(self, mock_genai: MagicMock, settings: Settings) -> None:
         mock_model = MagicMock()
         mock_genai.GenerativeModel.return_value = mock_model
@@ -133,14 +99,14 @@ class TestOcrExtractor:
         img = Image.new("RGB", (100, 100))
         loaded = LoadedImage(data=b"fake", mime_type="image/jpeg", source="test", pil_image=img)
 
-        fields = extractor.extract_fields(loaded, 0)
+        fields = extractor._step4_field_extraction(loaded, 0)
         assert fields is not None
         assert fields.retailer_name == "Foot Locker"
         assert fields.price == 149.99
 
-    @patch("pop_validation.ocr_extractor.genai")
+    @patch("pop_validation.gemini_client.genai")
     def test_extract_fields_error_returns_none(
-        self, mock_genai: MagicMock, settings: Settings
+        self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
         mock_model = MagicMock()
         mock_genai.GenerativeModel.return_value = mock_model
@@ -155,12 +121,12 @@ class TestOcrExtractor:
         img = Image.new("RGB", (100, 100))
         loaded = LoadedImage(data=b"fake", mime_type="image/jpeg", source="test", pil_image=img)
 
-        fields = extractor.extract_fields(loaded, 0)
+        fields = extractor._step4_field_extraction(loaded, 0)
         assert fields is None
 
-    @patch("pop_validation.ocr_extractor.genai")
+    @patch("pop_validation.gemini_client.genai")
     def test_analyze_returns_empty_on_load_failure(
-        self, mock_genai: MagicMock, settings: Settings
+        self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
         mock_genai.GenerativeModel.return_value = MagicMock()
 
@@ -169,3 +135,32 @@ class TestOcrExtractor:
 
         assert result.image_index == 0
         assert result.receipt_fields is None
+
+
+# ──────────────────────────────────────────────
+# Dependency Injection
+# ──────────────────────────────────────────────
+
+
+class TestOcrExtractorDI:
+    @patch("pop_validation.gemini_client.genai")
+    def test_custom_catalog_is_used(self, mock_genai: MagicMock, settings: Settings) -> None:
+        """Injected catalog provider must be used instead of default."""
+        mock_catalog = MagicMock()
+        mock_catalog.get_products.return_value = ["Custom Product A", "Custom Product B"]
+
+        extractor = OcrExtractor(settings, product_catalog=mock_catalog)
+
+        # Verify catalog was called during init (for logging product count)
+        mock_catalog.get_products.assert_called()
+
+        # Verify the injected catalog is stored
+        assert extractor._product_catalog is mock_catalog
+
+    @patch("pop_validation.gemini_client.genai")
+    def test_default_catalog_when_none(self, mock_genai: MagicMock, settings: Settings) -> None:
+        """Default JsonFileProductCatalogProvider is used when no catalog injected."""
+        from pop_validation.product_catalog import JsonFileProductCatalogProvider
+
+        extractor = OcrExtractor(settings)
+        assert isinstance(extractor._product_catalog, JsonFileProductCatalogProvider)

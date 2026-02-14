@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 from functools import lru_cache
-from pathlib import Path
 
 from loguru import logger
 from pydantic import AliasChoices, Field
@@ -59,17 +57,6 @@ MIN_IMAGE_RESOLUTION: int = 100  # pixels (width or height)
 MIN_FILE_SIZE_BYTES: int = 1024  # 1 KB
 MAX_FILE_SIZE_BYTES: int = 20 * 1024 * 1024  # 20 MB
 BLUR_THRESHOLD: float = 50.0  # Laplacian variance below this = blurry
-
-
-@lru_cache(maxsize=1)
-def load_products() -> list[str]:
-    """Load the [Insert your brand] product catalog from bundled JSON."""
-    products_path = Path(__file__).parent / "data" / "products.json"
-    logger.debug("Loading product catalog from: {}", products_path)
-    with open(products_path) as f:
-        products: list[str] = json.load(f)
-    logger.info("Product catalog loaded | {} products", len(products))
-    return products
 
 
 @lru_cache(maxsize=1)

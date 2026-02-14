@@ -11,7 +11,6 @@ from pop_validation.config import (
     REQUIRED_FIELDS,
     VALID_RECEIPT_TYPES,
     Settings,
-    load_products,
 )
 
 
@@ -66,17 +65,3 @@ class TestConstants:
         assert "product_counts" in REQUIRED_FIELDS
 
 
-class TestLoadProducts:
-    def test_loads_products(self) -> None:
-        products = load_products()
-        assert isinstance(products, list)
-        assert len(products) > 0
-
-    def test_contains_known_products(self) -> None:
-        products = load_products()
-        assert "Cloud 5" in products
-        assert "Cloudsurfer" in products
-
-    def test_product_count(self) -> None:
-        products = load_products()
-        assert len(products) >= 60  # Catalog may grow; ensure reasonable count
