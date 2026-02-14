@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from pop_validation.product_catalog import (
+from pop_validation.catalog.provider import (
     JsonFileProductCatalogProvider,
 )
 

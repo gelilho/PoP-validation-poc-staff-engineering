@@ -16,7 +16,7 @@ from pop_validation.config import (
     MIN_IMAGE_RESOLUTION,
     SUPPORTED_IMAGE_FORMATS,
 )
-from pop_validation.image_loader import LoadedImage
+from pop_validation.imaging.loader import LoadedImage
 from pop_validation.models import ImageQualityReport
 
 

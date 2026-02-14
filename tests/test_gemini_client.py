@@ -5,17 +5,17 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+from pop_validation.client.gemini_client import GeminiClient
 from pop_validation.config import Settings
-from pop_validation.gemini_client import GeminiClient
 
 
 class TestGeminiClient:
-    @patch("pop_validation.gemini_client.genai")
+    @patch("pop_validation.client.gemini_client.genai")
     def test_configures_api_key(self, mock_genai: MagicMock, settings: Settings) -> None:
         GeminiClient(settings)
         mock_genai.configure.assert_called_once_with(api_key=settings.gemini_api_key)
 
-    @patch("pop_validation.gemini_client.genai")
+    @patch("pop_validation.client.gemini_client.genai")
     def test_creates_model_with_settings(
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
@@ -24,7 +24,7 @@ class TestGeminiClient:
         call_kwargs = mock_genai.GenerativeModel.call_args
         assert call_kwargs[1]["model_name"] == settings.gemini_model_name
 
-    @patch("pop_validation.gemini_client.genai")
+    @patch("pop_validation.client.gemini_client.genai")
     def test_call_returns_parsed_json(
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
@@ -48,7 +48,7 @@ class TestGeminiClient:
         assert result == expected
         mock_model.generate_content.assert_called_once()
 
-    @patch("pop_validation.gemini_client.genai")
+    @patch("pop_validation.client.gemini_client.genai")
     def test_call_sends_image_part(
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
@@ -67,7 +67,7 @@ class TestGeminiClient:
         assert call_args[0] == "some prompt"
         assert call_args[1] == {"mime_type": "image/png", "data": b"\x89PNG"}
 
-    @patch("pop_validation.gemini_client.genai")
+    @patch("pop_validation.client.gemini_client.genai")
     def test_call_propagates_api_error(
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
@@ -86,7 +86,7 @@ class TestGeminiClient:
                 mime_type="image/jpeg",
             )
 
-    @patch("pop_validation.gemini_client.genai")
+    @patch("pop_validation.client.gemini_client.genai")
     def test_call_propagates_json_parse_error(
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:

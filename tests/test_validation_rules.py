@@ -17,7 +17,7 @@ from pop_validation.models import (
     ProductCategory,
     ReceiptFields,
 )
-from pop_validation.validation_rules import (
+from pop_validation.validation.rules import (
     apply_rules,
     check_ai_generated,
     check_brand_products,

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pop_validation.image_loader import LoadedImage, load_image
+from pop_validation.imaging.loader import LoadedImage, load_image
 
 
 class TestLoadImageFromFile:
@@ -41,14 +41,14 @@ class TestLoadImageFromUrl:
         )
         mock_response.headers = {"Content-Type": "image/webp"}
 
-        with patch("pop_validation.image_loader.requests.get", return_value=mock_response):
+        with patch("pop_validation.imaging.loader.requests.get", return_value=mock_response):
             result = load_image("https://example.com/receipt.webp")
             assert isinstance(result, LoadedImage)
             assert result.mime_type == "image/webp"
             assert len(result.data) > 0
 
     def test_http_error_raises(self) -> None:
-        with patch("pop_validation.image_loader.requests.get") as mock_get:
+        with patch("pop_validation.imaging.loader.requests.get") as mock_get:
             mock_get.side_effect = Exception("Connection refused")
             with pytest.raises(Exception, match="Connection refused"):
                 load_image("https://example.com/bad.jpg")

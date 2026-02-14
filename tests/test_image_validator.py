@@ -6,8 +6,8 @@ import io
 
 from PIL import Image
 
-from pop_validation.image_loader import LoadedImage
-from pop_validation.image_validator import (
+from pop_validation.imaging.loader import LoadedImage
+from pop_validation.imaging.validator import (
     check_file_size,
     check_format,
     check_resolution,

@@ -1,6 +1,6 @@
 """Pure helper functions for field parsing and inference.
 
-Stateless, side-effect-free utilities used by the OCR extractor.
+Stateless, side-effect-free utilities used by the analyzer.
 Each function is independently testable with zero dependencies on external services.
 """
 

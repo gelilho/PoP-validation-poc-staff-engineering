@@ -20,11 +20,11 @@ from pop_validation.pipeline import PopValidationPipeline, _build_result
 # ──────────────────────────────────────────────
 
 
-def _make_mock_ocr(analyses: list[ImageAnalysis]) -> MagicMock:
-    """Create a mock OcrExtractor that returns predefined analyses."""
-    mock_ocr = MagicMock()
-    mock_ocr.analyze.side_effect = analyses
-    return mock_ocr
+def _make_mock_analyzer(analyses: list[ImageAnalysis]) -> MagicMock:
+    """Create a mock PopAnalyzer that returns predefined analyses."""
+    mock_analyzer = MagicMock()
+    mock_analyzer.analyze.side_effect = analyses
+    return mock_analyzer
 
 
 def _valid_analysis(index: int = 0) -> ImageAnalysis:
@@ -69,8 +69,8 @@ def _invalid_analysis(index: int = 0) -> ImageAnalysis:
 
 class TestPopValidationPipeline:
     def test_single_valid_image(self, settings: Settings) -> None:
-        mock_ocr = _make_mock_ocr([_valid_analysis(0)])
-        pipeline = PopValidationPipeline(settings=settings, ocr_extractor=mock_ocr)
+        mock_analyzer = _make_mock_analyzer([_valid_analysis(0)])
+        pipeline = PopValidationPipeline(settings=settings, analyzer=mock_analyzer)
 
         request = ValidationRequest(
             warranty_id="W-123",
@@ -84,8 +84,8 @@ class TestPopValidationPipeline:
         assert response.pop_validation_results[0].message == "VALID_RECEIPT_FOUND"
 
     def test_single_invalid_image(self, settings: Settings) -> None:
-        mock_ocr = _make_mock_ocr([_invalid_analysis(0)])
-        pipeline = PopValidationPipeline(settings=settings, ocr_extractor=mock_ocr)
+        mock_analyzer = _make_mock_analyzer([_invalid_analysis(0)])
+        pipeline = PopValidationPipeline(settings=settings, analyzer=mock_analyzer)
 
         request = ValidationRequest(
             warranty_id="W-456",
@@ -98,14 +98,14 @@ class TestPopValidationPipeline:
         assert response.pop_validation_results[0].message == "RECEIPT_NOT_FOUND"
 
     def test_mixed_images_one_valid(self, settings: Settings) -> None:
-        mock_ocr = _make_mock_ocr(
+        mock_analyzer = _make_mock_analyzer(
             [
                 _invalid_analysis(0),
                 _valid_analysis(1),
                 _invalid_analysis(2),
             ]
         )
-        pipeline = PopValidationPipeline(settings=settings, ocr_extractor=mock_ocr)
+        pipeline = PopValidationPipeline(settings=settings, analyzer=mock_analyzer)
 
         request = ValidationRequest(
             warranty_id="W-789",
@@ -117,13 +117,13 @@ class TestPopValidationPipeline:
         assert len(response.pop_validation_results) == 3
 
     def test_all_invalid_images(self, settings: Settings) -> None:
-        mock_ocr = _make_mock_ocr(
+        mock_analyzer = _make_mock_analyzer(
             [
                 _invalid_analysis(0),
                 _invalid_analysis(1),
             ]
         )
-        pipeline = PopValidationPipeline(settings=settings, ocr_extractor=mock_ocr)
+        pipeline = PopValidationPipeline(settings=settings, analyzer=mock_analyzer)
 
         request = ValidationRequest(
             warranty_id="W-000",
@@ -148,8 +148,8 @@ class TestPopValidationPipeline:
                 # product_prices missing
             ),
         )
-        mock_ocr = _make_mock_ocr([analysis])
-        pipeline = PopValidationPipeline(settings=settings, ocr_extractor=mock_ocr)
+        mock_analyzer = _make_mock_analyzer([analysis])
+        pipeline = PopValidationPipeline(settings=settings, analyzer=mock_analyzer)
 
         request = ValidationRequest(warranty_id="W-UNC", image_urls=["test.jpg"])
         response = pipeline.validate(request)
@@ -165,8 +165,8 @@ class TestPopValidationPipeline:
             image_quality=ImageQuality.HIGH,
             is_ai_generated=True,
         )
-        mock_ocr = _make_mock_ocr([analysis])
-        pipeline = PopValidationPipeline(settings=settings, ocr_extractor=mock_ocr)
+        mock_analyzer = _make_mock_analyzer([analysis])
+        pipeline = PopValidationPipeline(settings=settings, analyzer=mock_analyzer)
 
         request = ValidationRequest(warranty_id="W-AI", image_urls=["fake.jpg"])
         response = pipeline.validate(request)

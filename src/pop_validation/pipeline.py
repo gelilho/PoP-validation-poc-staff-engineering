@@ -10,16 +10,16 @@ import time
 
 from loguru import logger
 
+from pop_validation.catalog.provider import ProductCatalogProvider
 from pop_validation.config import Settings, get_settings
+from pop_validation.extraction.analyzer import PopAnalyzer
 from pop_validation.models import (
     ImageAnalysis,
     ImageValidationResult,
     ValidationRequest,
     ValidationResponse,
 )
-from pop_validation.ocr_extractor import OcrExtractor
-from pop_validation.product_catalog import ProductCatalogProvider
-from pop_validation.validation_rules import apply_rules
+from pop_validation.validation.rules import apply_rules
 
 
 class PopValidationPipeline:
@@ -36,12 +36,12 @@ class PopValidationPipeline:
     def __init__(
         self,
         settings: Settings | None = None,
-        ocr_extractor: OcrExtractor | None = None,
+        analyzer: PopAnalyzer | None = None,
         product_catalog: ProductCatalogProvider | None = None,
     ) -> None:
         logger.info("Initializing PopValidationPipeline...")
         self._settings = settings or get_settings()
-        self._ocr = ocr_extractor or OcrExtractor(
+        self._analyzer = analyzer or PopAnalyzer(
             self._settings, product_catalog=product_catalog
         )
         logger.info("PopValidationPipeline ready")
@@ -114,7 +114,7 @@ class PopValidationPipeline:
         total = len(image_urls)
         for idx, url in enumerate(image_urls):
             logger.info("Processing image [{}/{}]: {}", idx + 1, total, url)
-            analysis = self._ocr.analyze(url, idx)
+            analysis = self._analyzer.analyze(url, idx)
             analyses.append(analysis)
         return analyses
 

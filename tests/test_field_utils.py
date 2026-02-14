@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pop_validation.field_utils import (
+from pop_validation.extraction.field_utils import (
     build_quality_report,
     build_receipt_fields,
     get_language,
