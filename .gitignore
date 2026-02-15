@@ -9,6 +9,9 @@ __pycache__/
 dist/
 build/
 
+# Results (CSV audit trail — generated at runtime)
+results/
+
 # Testing
 .coverage
 htmlcov/

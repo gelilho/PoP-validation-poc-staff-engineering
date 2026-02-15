@@ -51,7 +51,7 @@ _CSV_COLUMNS: tuple[str, ...] = (
     "receipt_type",
 )
 
-_DEFAULT_CSV_PATH = Path("validation_results.csv")
+_DEFAULT_CSV_PATH = Path(__file__).resolve().parents[3] / "results" / "validation_results.csv"
 
 
 # ── Protocol ─────────────────────────────────────
@@ -127,6 +127,7 @@ class CsvResultLogger:
         comment: str | None,
     ) -> None:
         """Write the row. May raise on I/O errors."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         file_exists = self._path.exists() and self._path.stat().st_size > 0
 
         with open(self._path, mode="a", newline="", encoding="utf-8") as f:
