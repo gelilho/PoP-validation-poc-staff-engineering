@@ -2,13 +2,14 @@
 
 Open this file. Read validate_image() and validate(). You understand the system.
 
-Six steps per image, then aggregate across all images:
+Seven steps per image, then aggregate across all images:
     1. Load image         (free)
     2. Technical check    (free — Pillow)
     3. Quality assessment (Gemini call #1)
     4. Field extraction   (Gemini call #2)
     5. Apply rules        (business logic)
     6. Build result       (assemble output)
+    7. Log result         (audit trail — CSV / BQ / Postgres)
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from pop_validation.models import (
 )
 from pop_validation.prompts.extraction_prompt import build_extraction_prompt
 from pop_validation.prompts.quality_prompt import build_quality_prompt
+from pop_validation.reporting.csv_logger import CsvResultLogger, ResultLogger
 from pop_validation.validation.rules import apply_rules
 
 
@@ -63,20 +65,24 @@ class PopValidationPipeline:
         self,
         settings: Settings | None = None,
         product_catalog: ProductCatalogProvider | None = None,
+        result_logger: ResultLogger | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._client = GeminiClient(self._settings)
         self._quality_prompt = build_quality_prompt()
         self._catalog = product_catalog or JsonFileProductCatalogProvider()
+        self._result_logger = result_logger or CsvResultLogger()
         logger.info(
             "Pipeline ready | catalog={} products",
             len(self._catalog.get_products()),
         )
 
-    # ── Per-image recipe (THE 6 steps) ───────────
+    # ── Per-image recipe (THE 7 steps) ───────────
 
-    def validate_image(self, image_url: str, image_index: int) -> ImageValidationResult:
-        """The full per-image recipe. Six steps, read top to bottom.
+    def validate_image(
+        self, image_url: str, image_index: int, warranty_id: str = "",
+    ) -> ImageValidationResult:
+        """The full per-image recipe. Seven steps, read top to bottom.
 
         Step 1: Load image           (free)
         Step 2: Technical validation  (free — Pillow)
@@ -84,8 +90,10 @@ class PopValidationPipeline:
         Step 4: Field extraction      (Gemini call #2, only if #1 passes)
         Step 5: Apply business rules  (chain of responsibility)
         Step 6: Build result          (assemble output)
+        Step 7: Log result            (audit trail — CSV / BQ / Postgres)
         """
         logger.info("--- Image [{}] | source={}", image_index, image_url)
+        comment: str | None = None
 
         try:
             # Step 1: Load the image
@@ -95,32 +103,41 @@ class PopValidationPipeline:
             tech = check_technical_quality(loaded)
             if not tech.resolution_ok or not tech.file_size_ok:
                 analysis = self._reject_technical(image_index, image_url)
-                return self._apply_rules_and_build(analysis)
+                result = self._apply_rules_and_build(analysis)
+                self._log_result(result, warranty_id, image_url, comment)
+                return result
 
             # Step 3: Quality assessment (Gemini call #1)
             quality = self._assess_quality(loaded, image_index)
             if quality.rejection_reason is not None:
                 analysis = self._reject_quality(image_index, image_url, quality)
-                return self._apply_rules_and_build(analysis)
+                result = self._apply_rules_and_build(analysis)
+                self._log_result(result, warranty_id, image_url, comment)
+                return result
 
             # Step 4: Field extraction (Gemini call #2)
             fields = self._extract_fields(loaded, image_index)
 
             # Step 5 + 6: Apply rules and build result
             analysis = self._build_analysis(image_index, image_url, quality, fields)
-            return self._apply_rules_and_build(analysis)
+            result = self._apply_rules_and_build(analysis)
 
         except Exception as e:
             logger.error("[{}] Failed: {}: {}", image_index, type(e).__name__, e)
+            comment = f"{type(e).__name__}: {e}"
             analysis = ImageAnalysis(image_index=image_index, image_url=image_url)
-            return self._apply_rules_and_build(analysis)
+            result = self._apply_rules_and_build(analysis)
+
+        # Step 7: Log result (audit trail — always executes)
+        self._log_result(result, warranty_id, image_url, comment)
+        return result
 
     # ── Multi-image orchestration ────────────────
 
     def validate(self, request: ValidationRequest) -> ValidationResponse:
         """Validate all images and aggregate results.
 
-        For each image → validate_image() (6 steps).
+        For each image → validate_image() (7 steps).
         Then OR-aggregate: any valid → pop_valid=True.
         """
         start = time.perf_counter()
@@ -129,13 +146,13 @@ class PopValidationPipeline:
             request.warranty_id, len(request.image_urls),
         )
 
-        # Process each image through the 6-step recipe
+        # Process each image through the 7-step recipe
         pop_valid = False
         uncertain = False
         results: list[ImageValidationResult] = []
 
         for idx, url in enumerate(request.image_urls):
-            result = self.validate_image(url, idx)
+            result = self.validate_image(url, idx, request.warranty_id)
             results.append(result)
 
             if result.message == "VALID_RECEIPT_FOUND":
@@ -192,6 +209,21 @@ class PopValidationPipeline:
         message, _is_valid, _is_uncertain = apply_rules(analysis)
         logger.info("[{}] Rules → {}", analysis.image_index, message)
         return _build_result(analysis, message)
+
+    def _log_result(
+        self,
+        result: ImageValidationResult,
+        warranty_id: str,
+        image_url: str,
+        comment: str | None,
+    ) -> None:
+        """Step 7: Persist the result to the audit trail."""
+        self._result_logger.log(
+            result=result,
+            warranty_id=warranty_id,
+            image_url=image_url,
+            comment=comment,
+        )
 
     # ── Analysis builders ────────────────────────
 

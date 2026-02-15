@@ -22,6 +22,28 @@ from pop_validation.models import (
 from pop_validation.pipeline import PopValidationPipeline, _build_result
 
 # ──────────────────────────────────────────────
+# Noop logger (avoids CSV file I/O in unit tests)
+# ──────────────────────────────────────────────
+
+
+class _NoOpLogger:
+    """A result logger that does nothing — for unit tests."""
+
+    def log(
+        self,
+        *,
+        result: ImageValidationResult,
+        warranty_id: str,
+        image_url: str,
+        comment: str | None = None,
+    ) -> None:
+        pass
+
+
+_NOOP_LOGGER = _NoOpLogger()
+
+
+# ──────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────
 
@@ -119,7 +141,7 @@ class TestPopValidationPipeline:
     def test_single_valid_image(
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
-        pipeline = PopValidationPipeline(settings=settings)
+        pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
         pipeline.validate_image = MagicMock(return_value=_valid_result())  # type: ignore[method-assign]
 
         request = ValidationRequest(
@@ -137,7 +159,7 @@ class TestPopValidationPipeline:
     def test_single_invalid_image(
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
-        pipeline = PopValidationPipeline(settings=settings)
+        pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
         pipeline.validate_image = MagicMock(return_value=_invalid_result())  # type: ignore[method-assign]
 
         request = ValidationRequest(
@@ -154,7 +176,7 @@ class TestPopValidationPipeline:
     def test_mixed_images_one_valid(
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
-        pipeline = PopValidationPipeline(settings=settings)
+        pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
         pipeline.validate_image = MagicMock(  # type: ignore[method-assign]
             side_effect=[_invalid_result(), _valid_result(), _invalid_result()],
         )
@@ -172,7 +194,7 @@ class TestPopValidationPipeline:
     def test_all_invalid_images(
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
-        pipeline = PopValidationPipeline(settings=settings)
+        pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
         pipeline.validate_image = MagicMock(  # type: ignore[method-assign]
             side_effect=[_invalid_result(), _invalid_result()],
         )
@@ -190,7 +212,7 @@ class TestPopValidationPipeline:
     def test_uncertain_when_missing_fields(
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
-        pipeline = PopValidationPipeline(settings=settings)
+        pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
         pipeline.validate_image = MagicMock(return_value=_uncertain_result())  # type: ignore[method-assign]
 
         request = ValidationRequest(warranty_id="W-UNC", image_urls=["test.jpg"])
@@ -204,7 +226,7 @@ class TestPopValidationPipeline:
     def test_ai_generated_rejection(
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
-        pipeline = PopValidationPipeline(settings=settings)
+        pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
         pipeline.validate_image = MagicMock(return_value=_ai_generated_result())  # type: ignore[method-assign]
 
         request = ValidationRequest(warranty_id="W-AI", image_urls=["fake.jpg"])
@@ -298,7 +320,7 @@ class TestValidateImageFlow:
             MagicMock(text=extraction_json),
         ]
 
-        pipeline = PopValidationPipeline(settings=settings)
+        pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
         result = pipeline.validate_image("https://example.com/receipt.jpg", 0)
 
         assert result.message == "VALID_RECEIPT_FOUND"
@@ -323,7 +345,7 @@ class TestValidateImageFlow:
         mock_model = MagicMock()
         mock_genai.GenerativeModel.return_value = mock_model
 
-        pipeline = PopValidationPipeline(settings=settings)
+        pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
         result = pipeline.validate_image("https://example.com/blurry.jpg", 0)
 
         assert result.message == "LOW_IMAGE_QUALITY"
@@ -354,7 +376,7 @@ class TestValidateImageFlow:
         mock_genai.GenerativeModel.return_value = mock_model
         mock_model.generate_content.return_value = MagicMock(text=quality_json)
 
-        pipeline = PopValidationPipeline(settings=settings)
+        pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
         result = pipeline.validate_image("https://example.com/cat.jpg", 0)
 
         assert result.message == "LOW_IMAGE_QUALITY"
@@ -373,7 +395,7 @@ class TestValidateImageFlow:
         mock_load.side_effect = FileNotFoundError("Image not found")
         mock_genai.GenerativeModel.return_value = MagicMock()
 
-        pipeline = PopValidationPipeline(settings=settings)
+        pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
         result = pipeline.validate_image("/nonexistent.jpg", 0)
 
         assert result.message == "RECEIPT_NOT_FOUND"
@@ -398,7 +420,7 @@ class TestValidateImageFlow:
         mock_genai.GenerativeModel.return_value = mock_model
         mock_model.generate_content.side_effect = RuntimeError("503 Service Unavailable")
 
-        pipeline = PopValidationPipeline(settings=settings)
+        pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
         result = pipeline.validate_image("https://example.com/receipt.jpg", 0)
 
         # Quality assessment failed → no receipt fields → rules say RECEIPT_NOT_FOUND
@@ -432,7 +454,7 @@ class TestValidateImageFlow:
             RuntimeError("Extraction failed"),
         ]
 
-        pipeline = PopValidationPipeline(settings=settings)
+        pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
         result = pipeline.validate_image("https://example.com/receipt.jpg", 0)
 
         # No fields extracted → RECEIPT_NOT_FOUND from rules
