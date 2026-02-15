@@ -1,7 +1,14 @@
-"""Main PoP validation pipeline — Facade pattern.
+"""PoP Validation Pipeline — the full recipe, top to bottom.
 
-Single entry point that orchestrates OCR extraction, validation rules,
-and result aggregation behind one clean `validate()` method.
+Open this file. Read validate_image() and validate(). You understand the system.
+
+Six steps per image, then aggregate across all images:
+    1. Load image         (free)
+    2. Technical check    (free — Pillow)
+    3. Quality assessment (Gemini call #1)
+    4. Field extraction   (Gemini call #2)
+    5. Apply rules        (business logic)
+    6. Build result       (assemble output)
 """
 
 from __future__ import annotations
@@ -10,20 +17,39 @@ import time
 
 from loguru import logger
 
-from pop_validation.catalog.provider import ProductCatalogProvider
+from pop_validation.catalog.provider import (
+    JsonFileProductCatalogProvider,
+    ProductCatalogProvider,
+)
+from pop_validation.client.gemini_client import GeminiClient
 from pop_validation.config import Settings, get_settings
-from pop_validation.extraction.analyzer import PopAnalyzer
+from pop_validation.extraction.field_utils import (
+    build_quality_report,
+    build_receipt_fields,
+    get_language,
+    infer_product_category,
+)
+from pop_validation.imaging.loader import LoadedImage, load_image
+from pop_validation.imaging.validator import validate_image as check_technical_quality
 from pop_validation.models import (
     ImageAnalysis,
+    ImageQuality,
+    ImageQualityReport,
     ImageValidationResult,
+    ReceiptFields,
     ValidationRequest,
     ValidationResponse,
 )
+from pop_validation.prompts.extraction_prompt import build_extraction_prompt
+from pop_validation.prompts.quality_prompt import build_quality_prompt
 from pop_validation.validation.rules import apply_rules
 
 
 class PopValidationPipeline:
-    """End-to-end Proof of Purchase validation pipeline.
+    """End-to-end Proof of Purchase validation.
+
+    Read validate_image() to understand per-image flow.
+    Read validate() to understand multi-image orchestration.
 
     Usage:
         pipeline = PopValidationPipeline()
@@ -36,137 +62,197 @@ class PopValidationPipeline:
     def __init__(
         self,
         settings: Settings | None = None,
-        analyzer: PopAnalyzer | None = None,
         product_catalog: ProductCatalogProvider | None = None,
     ) -> None:
-        logger.info("Initializing PopValidationPipeline...")
         self._settings = settings or get_settings()
-        self._analyzer = analyzer or PopAnalyzer(
-            self._settings, product_catalog=product_catalog
+        self._client = GeminiClient(self._settings)
+        self._quality_prompt = build_quality_prompt()
+        self._catalog = product_catalog or JsonFileProductCatalogProvider()
+        logger.info(
+            "Pipeline ready | catalog={} products",
+            len(self._catalog.get_products()),
         )
-        logger.info("PopValidationPipeline ready")
+
+    # ── Per-image recipe (THE 6 steps) ───────────
+
+    def validate_image(self, image_url: str, image_index: int) -> ImageValidationResult:
+        """The full per-image recipe. Six steps, read top to bottom.
+
+        Step 1: Load image           (free)
+        Step 2: Technical validation  (free — Pillow)
+        Step 3: Quality assessment    (Gemini call #1)
+        Step 4: Field extraction      (Gemini call #2, only if #1 passes)
+        Step 5: Apply business rules  (chain of responsibility)
+        Step 6: Build result          (assemble output)
+        """
+        logger.info("--- Image [{}] | source={}", image_index, image_url)
+
+        try:
+            # Step 1: Load the image
+            loaded = load_image(image_url)
+
+            # Step 2: Technical validation (free — Pillow checks)
+            tech = check_technical_quality(loaded)
+            if not tech.resolution_ok or not tech.file_size_ok:
+                analysis = self._reject_technical(image_index, image_url)
+                return self._apply_rules_and_build(analysis)
+
+            # Step 3: Quality assessment (Gemini call #1)
+            quality = self._assess_quality(loaded, image_index)
+            if quality.rejection_reason is not None:
+                analysis = self._reject_quality(image_index, image_url, quality)
+                return self._apply_rules_and_build(analysis)
+
+            # Step 4: Field extraction (Gemini call #2)
+            fields = self._extract_fields(loaded, image_index)
+
+            # Step 5 + 6: Apply rules and build result
+            analysis = self._build_analysis(image_index, image_url, quality, fields)
+            return self._apply_rules_and_build(analysis)
+
+        except Exception as e:
+            logger.error("[{}] Failed: {}: {}", image_index, type(e).__name__, e)
+            analysis = ImageAnalysis(image_index=image_index, image_url=image_url)
+            return self._apply_rules_and_build(analysis)
+
+    # ── Multi-image orchestration ────────────────
 
     def validate(self, request: ValidationRequest) -> ValidationResponse:
+        """Validate all images and aggregate results.
+
+        For each image → validate_image() (6 steps).
+        Then OR-aggregate: any valid → pop_valid=True.
         """
-        Run the full PoP validation pipeline.
-
-        Three-step flow:
-            1. Extract: OCR each image -> ImageAnalysis
-            2. Validate: Apply rule chain -> (message, valid, uncertain)
-            3. Aggregate: OR across results, build response
-
-        Args:
-            request: Validation request with warranty_id and image URLs.
-
-        Returns:
-            ValidationResponse with pop_valid, uncertain, and per-image results.
-        """
-        total_start = time.perf_counter()
-        image_count = len(request.image_urls)
-
-        logger.info("=" * 70)
+        start = time.perf_counter()
         logger.info(
             "PIPELINE START | warranty_id={} | images={}",
-            request.warranty_id,
-            image_count,
-        )
-        logger.info("=" * 70)
-
-        # Step 1: Extract OCR data from each image
-        logger.info("Step 1/2: Extracting OCR data from {} image(s)...", image_count)
-        extract_start = time.perf_counter()
-        analyses = self._extract_all(request.image_urls)
-        extract_ms = (time.perf_counter() - extract_start) * 1000
-        logger.info(
-            "Step 1/2: Extraction complete | {:.0f}ms for {} image(s)", extract_ms, image_count
+            request.warranty_id, len(request.image_urls),
         )
 
-        # Step 2 + 3: Validate and aggregate
-        logger.info("Step 2/2: Applying validation rules and aggregating results...")
-        response = self._validate_and_aggregate(analyses)
-
-        total_ms = (time.perf_counter() - total_start) * 1000
-        logger.info("=" * 70)
-        logger.info(
-            "PIPELINE DONE | warranty_id={} | pop_valid={} | uncertain={} | "
-            "images_processed={} | total_time={:.0f}ms",
-            request.warranty_id,
-            response.pop_valid,
-            response.uncertain,
-            image_count,
-            total_ms,
-        )
-        for i, result in enumerate(response.pop_validation_results):
-            logger.info(
-                "  Image [{}] -> {} | retailer={} | products={}",
-                i,
-                result.message,
-                result.retailer_name,
-                result.product_counts,
-            )
-        logger.info("=" * 70)
-
-        return response
-
-    def _extract_all(self, image_urls: list[str]) -> list[ImageAnalysis]:
-        """Extract OCR data from all images."""
-        analyses: list[ImageAnalysis] = []
-        total = len(image_urls)
-        for idx, url in enumerate(image_urls):
-            logger.info("Processing image [{}/{}]: {}", idx + 1, total, url)
-            analysis = self._analyzer.analyze(url, idx)
-            analyses.append(analysis)
-        return analyses
-
-    def _validate_and_aggregate(self, analyses: list[ImageAnalysis]) -> ValidationResponse:
-        """Apply rules to each analysis and aggregate into final response."""
+        # Process each image through the 6-step recipe
         pop_valid = False
         uncertain = False
         results: list[ImageValidationResult] = []
 
-        for analysis in analyses:
-            logger.info(
-                "[{}] Applying validation rule chain...",
-                analysis.image_index,
-            )
-            message, image_valid, image_uncertain = apply_rules(analysis)
-
-            logger.info(
-                "[{}] Rule chain result | message={} | valid={} | uncertain={}",
-                analysis.image_index,
-                message,
-                image_valid,
-                image_uncertain,
-            )
-
-            if image_valid:
-                pop_valid = True
-            if image_uncertain:
-                uncertain = True
-
-            result = _build_result(analysis, message)
+        for idx, url in enumerate(request.image_urls):
+            result = self.validate_image(url, idx)
             results.append(result)
 
-        return ValidationResponse(
+            if result.message == "VALID_RECEIPT_FOUND":
+                pop_valid = True
+            if result.message and "MISSING_REQUIRED" in result.message:
+                uncertain = True
+
+        response = ValidationResponse(
             pop_valid=pop_valid,
             uncertain=uncertain,
             pop_validation_results=results,
         )
 
+        self._log_summary(request, response, start)
+        return response
+
+    # ── Step implementations ─────────────────────
+
+    def _assess_quality(self, loaded: LoadedImage, idx: int) -> ImageQualityReport:
+        """Step 3: Gemini call #1 — Is this a readable receipt?"""
+        try:
+            data = self._client.call(
+                prompt=self._quality_prompt,
+                image_data=loaded.data,
+                mime_type=loaded.mime_type,
+                call_label="Quality Assessment",
+                image_index=idx,
+            )
+            return build_quality_report(data)
+        except Exception as e:
+            logger.error("[{}] Quality assessment failed: {}", idx, e)
+            return ImageQualityReport(
+                rejection_reason=f"QUALITY_ASSESSMENT_FAILED: {type(e).__name__}",
+            )
+
+    def _extract_fields(self, loaded: LoadedImage, idx: int) -> ReceiptFields | None:
+        """Step 4: Gemini call #2 — Extract structured receipt fields."""
+        try:
+            prompt = build_extraction_prompt(self._catalog.get_products())
+            data = self._client.call(
+                prompt=prompt,
+                image_data=loaded.data,
+                mime_type=loaded.mime_type,
+                call_label="Field Extraction",
+                image_index=idx,
+            )
+            return build_receipt_fields(data)
+        except Exception as e:
+            logger.error("[{}] Field extraction failed: {}", idx, e)
+            return None
+
+    def _apply_rules_and_build(self, analysis: ImageAnalysis) -> ImageValidationResult:
+        """Steps 5+6: Apply business rules, then build the result."""
+        message, _is_valid, _is_uncertain = apply_rules(analysis)
+        logger.info("[{}] Rules → {}", analysis.image_index, message)
+        return _build_result(analysis, message)
+
+    # ── Analysis builders ────────────────────────
+
+    @staticmethod
+    def _reject_technical(idx: int, url: str) -> ImageAnalysis:
+        logger.warning("[{}] REJECTED by technical validation | Gemini SKIPPED", idx)
+        return ImageAnalysis(image_index=idx, image_url=url, image_quality=ImageQuality.LOW)
+
+    @staticmethod
+    def _reject_quality(idx: int, url: str, q: ImageQualityReport) -> ImageAnalysis:
+        logger.warning("[{}] REJECTED by quality assessment | Extraction SKIPPED", idx)
+        return ImageAnalysis(
+            image_index=idx,
+            image_url=url,
+            image_quality=q.image_quality,
+            image_category=q.image_category,
+            is_ai_generated=q.is_ai_generated,
+        )
+
+    @staticmethod
+    def _build_analysis(
+        idx: int, url: str, quality: ImageQualityReport, fields: ReceiptFields | None,
+    ) -> ImageAnalysis:
+        logger.info("[{}] Analysis complete | fields_extracted={}", idx, fields is not None)
+        return ImageAnalysis(
+            image_index=idx,
+            image_url=url,
+            image_quality=quality.image_quality,
+            image_category=quality.image_category,
+            product_category=infer_product_category(fields),
+            language_category=get_language(quality, fields),
+            is_ai_generated=quality.is_ai_generated,
+            receipt_fields=fields,
+        )
+
+    # ── Logging ──────────────────────────────────
+
+    @staticmethod
+    def _log_summary(
+        request: ValidationRequest,
+        response: ValidationResponse,
+        start: float,
+    ) -> None:
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.info(
+            "PIPELINE DONE | warranty_id={} | pop_valid={} | uncertain={} | "
+            "images={} | {:.0f}ms",
+            request.warranty_id, response.pop_valid, response.uncertain,
+            len(response.pop_validation_results), elapsed_ms,
+        )
+        for i, r in enumerate(response.pop_validation_results):
+            logger.info("  [{}] {} | retailer={}", i, r.message, r.retailer_name)
+
 
 def _build_result(analysis: ImageAnalysis, message: str) -> ImageValidationResult:
-    """Build an ImageValidationResult by merging metadata with receipt fields.
-
-    Analysis-level metadata takes precedence over receipt field values
-    when both are present (e.g., language_category).
-    """
+    """Build an ImageValidationResult by merging metadata with receipt fields."""
     result_data: dict[str, object] = {}
 
-    # First: flatten receipt fields (lower precedence)
     if analysis.receipt_fields is not None:
         result_data.update(analysis.receipt_fields.model_dump())
 
-    # Then: overlay analysis metadata (higher precedence)
     result_data["message"] = message
     result_data["image_category"] = analysis.image_category
     result_data["product_category"] = analysis.product_category
