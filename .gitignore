@@ -10,7 +10,7 @@ dist/
 build/
 
 # Results (CSV audit trail — generated at runtime)
-results/
+results/*.csv
 
 # Testing
 .coverage
