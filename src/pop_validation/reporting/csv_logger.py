@@ -174,6 +174,9 @@ class CsvResultLogger:
         for field_name, value in result.model_dump().items():
             if isinstance(value, (dict, list)):
                 row[field_name] = json.dumps(value)
+            elif isinstance(value, str):
+                # Replace newlines so each CSV row stays on one line
+                row[field_name] = value.replace("\n", ", ").replace("\r", "")
             else:
                 row[field_name] = value
 

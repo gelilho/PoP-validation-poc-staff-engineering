@@ -191,6 +191,32 @@ class TestCsvResultLogger:
         product_counts = json.loads(rows[0]["product_counts"])
         assert product_counts == {"Cloud 5": 1}
 
+    def test_newlines_in_fields_are_sanitized(self, tmp_path: Path) -> None:
+        """Gemini can return multi-line strings (e.g. address).
+
+        Newlines inside field values must be replaced so each CSV row
+        stays on exactly one line.
+        """
+        csv_path = tmp_path / "results.csv"
+        csv_logger = CsvResultLogger(path=csv_path)
+
+        result = ImageValidationResult(
+            message="VALID_RECEIPT_FOUND",
+            address="123 Main St\nSuite 4\nNew York, NY 10001",
+            retailer_location="Floor 1\nBuilding A",
+        )
+        csv_logger.log(result=result, warranty_id="W-NL", image_url="t.jpg")
+
+        # Each row must be exactly one line (header + 1 data row = 2 lines)
+        with open(csv_path, encoding="utf-8") as f:
+            lines = f.readlines()
+        assert len(lines) == 2
+
+        with open(csv_path, encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        assert rows[0]["address"] == "123 Main St, Suite 4, New York, NY 10001"
+        assert rows[0]["retailer_location"] == "Floor 1, Building A"
+
     def test_accumulates_across_instances(self, tmp_path: Path) -> None:
         csv_path = tmp_path / "shared.csv"
 
