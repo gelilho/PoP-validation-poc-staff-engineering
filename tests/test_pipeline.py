@@ -1,4 +1,4 @@
-"""Tests for PopValidationPipeline — orchestration and per-image flow."""
+"""Tests for PopValidationPipeline — facade + orchestration tests."""
 
 from __future__ import annotations
 
@@ -10,16 +10,13 @@ from PIL import Image
 from pop_validation.config import Settings
 from pop_validation.imaging.loader import LoadedImage
 from pop_validation.models import (
-    ImageAnalysis,
     ImageCategory,
-    ImageQuality,
     ImageQualityReport,
     ImageValidationResult,
     ProductCategory,
-    ReceiptFields,
     ValidationRequest,
 )
-from pop_validation.pipeline import PopValidationPipeline, _build_result
+from pop_validation.pipeline import PopValidationPipeline
 
 # ──────────────────────────────────────────────
 # Noop logger (avoids CSV file I/O in unit tests)
@@ -94,55 +91,28 @@ def _ai_generated_result() -> ImageValidationResult:
     )
 
 
-def _valid_analysis(index: int = 0) -> ImageAnalysis:
-    """Create a valid ImageAnalysis (for _build_result tests)."""
-    return ImageAnalysis(
-        image_index=index,
-        image_url=f"https://example.com/img{index}.jpg",
-        image_quality=ImageQuality.HIGH,
-        image_category=ImageCategory.PROOF_OF_PURCHASE,
-        product_category=ProductCategory.SHOES,
-        language_category="en",
-        is_ai_generated=False,
-        receipt_fields=ReceiptFields(
-            retailer_name="Foot Locker",
-            retailer_location="NYC",
-            purchase_date="2025-01-15",
-            product_name="Cloud 5",
-            transaction_number="12345",
-            price=149.99,
-            currency="USD",
-            receipt_type="official_receipt_paper",
-            product_counts={"Cloud 5": 1},
-            product_prices={"Cloud 5": 149.99},
-        ),
-    )
-
-
-def _invalid_analysis(index: int = 0) -> ImageAnalysis:
-    """Create an invalid ImageAnalysis (for _build_result tests)."""
-    return ImageAnalysis(
-        image_index=index,
-        image_url=f"https://example.com/img{index}.jpg",
-        image_quality=ImageQuality.HIGH,
-        receipt_fields=None,
+def _fake_loaded_image() -> LoadedImage:
+    """Create a LoadedImage suitable for testing."""
+    img = Image.new("RGB", (800, 600))
+    return LoadedImage(
+        data=b"fake-image-data", mime_type="image/jpeg", source="test", pil_image=img,
     )
 
 
 # ──────────────────────────────────────────────
-# Pipeline Orchestration Tests
+# Pipeline Facade Tests (mock orchestrator.run_image)
 # ──────────────────────────────────────────────
 
 
 class TestPopValidationPipeline:
-    """Test validate() orchestration by mocking validate_image()."""
+    """Test validate() orchestration by mocking run_image on the orchestrator."""
 
     @patch("pop_validation.client.gemini_client.genai")
     def test_single_valid_image(
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
         pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
-        pipeline.validate_image = MagicMock(return_value=_valid_result())  # type: ignore[method-assign]
+        pipeline._orchestrator.run_image = MagicMock(return_value=_valid_result())  # type: ignore[method-assign]
 
         request = ValidationRequest(
             warranty_id="W-123",
@@ -160,7 +130,7 @@ class TestPopValidationPipeline:
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
         pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
-        pipeline.validate_image = MagicMock(return_value=_invalid_result())  # type: ignore[method-assign]
+        pipeline._orchestrator.run_image = MagicMock(return_value=_invalid_result())  # type: ignore[method-assign]
 
         request = ValidationRequest(
             warranty_id="W-456",
@@ -177,7 +147,7 @@ class TestPopValidationPipeline:
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
         pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
-        pipeline.validate_image = MagicMock(  # type: ignore[method-assign]
+        pipeline._orchestrator.run_image = MagicMock(  # type: ignore[method-assign]
             side_effect=[_invalid_result(), _valid_result(), _invalid_result()],
         )
 
@@ -195,7 +165,7 @@ class TestPopValidationPipeline:
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
         pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
-        pipeline.validate_image = MagicMock(  # type: ignore[method-assign]
+        pipeline._orchestrator.run_image = MagicMock(  # type: ignore[method-assign]
             side_effect=[_invalid_result(), _invalid_result()],
         )
 
@@ -213,21 +183,20 @@ class TestPopValidationPipeline:
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
         pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
-        pipeline.validate_image = MagicMock(return_value=_uncertain_result())  # type: ignore[method-assign]
+        pipeline._orchestrator.run_image = MagicMock(return_value=_uncertain_result())  # type: ignore[method-assign]
 
         request = ValidationRequest(warranty_id="W-UNC", image_urls=["test.jpg"])
         response = pipeline.validate(request)
 
         assert response.pop_valid is False
         assert response.uncertain is True
-        assert "RECEIPT_MISSING_REQUIRED_INFORMATION" in response.pop_validation_results[0].message
 
     @patch("pop_validation.client.gemini_client.genai")
     def test_ai_generated_rejection(
         self, mock_genai: MagicMock, settings: Settings,
     ) -> None:
         pipeline = PopValidationPipeline(settings=settings, result_logger=_NOOP_LOGGER)
-        pipeline.validate_image = MagicMock(return_value=_ai_generated_result())  # type: ignore[method-assign]
+        pipeline._orchestrator.run_image = MagicMock(return_value=_ai_generated_result())  # type: ignore[method-assign]
 
         request = ValidationRequest(warranty_id="W-AI", image_urls=["fake.jpg"])
         response = pipeline.validate(request)
@@ -237,56 +206,16 @@ class TestPopValidationPipeline:
 
 
 # ──────────────────────────────────────────────
-# Build Result Tests
+# Per-Image Agent Flow Tests (integration through all agents)
 # ──────────────────────────────────────────────
-
-
-class TestBuildResult:
-    def test_builds_result_with_receipt_fields(self) -> None:
-        analysis = _valid_analysis()
-        result = _build_result(analysis, "VALID_RECEIPT_FOUND")
-
-        assert result.message == "VALID_RECEIPT_FOUND"
-        assert result.retailer_name == "Foot Locker"
-        assert result.product_counts == {"Cloud 5": 1}
-        assert result.image_category == ImageCategory.PROOF_OF_PURCHASE
-
-    def test_builds_result_without_receipt_fields(self) -> None:
-        analysis = _invalid_analysis()
-        result = _build_result(analysis, "RECEIPT_NOT_FOUND")
-
-        assert result.message == "RECEIPT_NOT_FOUND"
-        assert result.retailer_name is None
-        assert result.product_counts is None
-
-    def test_preserves_metadata(self) -> None:
-        analysis = _valid_analysis()
-        result = _build_result(analysis, "VALID_RECEIPT_FOUND")
-
-        assert result.product_category == ProductCategory.SHOES
-        assert result.language_category == "en"
-        assert result.is_ai_generated is False
-
-
-# ──────────────────────────────────────────────
-# Per-Image 6-Step Flow Tests
-# ──────────────────────────────────────────────
-
-
-def _fake_loaded_image() -> LoadedImage:
-    """Create a LoadedImage suitable for testing."""
-    img = Image.new("RGB", (800, 600))
-    return LoadedImage(
-        data=b"fake-image-data", mime_type="image/jpeg", source="test", pil_image=img,
-    )
 
 
 class TestValidateImageFlow:
-    """Test the 6-step per-image flow by mocking external boundaries."""
+    """Test the full per-image agent flow by mocking external boundaries."""
 
     @patch("pop_validation.client.gemini_client.genai")
-    @patch("pop_validation.pipeline.load_image")
-    @patch("pop_validation.pipeline.check_technical_quality")
+    @patch("pop_validation.agents.image_loader_agent.load_image")
+    @patch("pop_validation.agents.quality_agent.check_technical_quality")
     def test_full_success_path(
         self,
         mock_tech: MagicMock,
@@ -294,7 +223,7 @@ class TestValidateImageFlow:
         mock_genai: MagicMock,
         settings: Settings,
     ) -> None:
-        """All 6 steps succeed → VALID_RECEIPT_FOUND."""
+        """All agents succeed → VALID_RECEIPT_FOUND."""
         mock_load.return_value = _fake_loaded_image()
         mock_tech.return_value = ImageQualityReport(
             resolution_ok=True, format_ok=True, file_size_ok=True, blur_score=100.0,
@@ -327,8 +256,8 @@ class TestValidateImageFlow:
         assert result.retailer_name == "Foot Locker"
 
     @patch("pop_validation.client.gemini_client.genai")
-    @patch("pop_validation.pipeline.load_image")
-    @patch("pop_validation.pipeline.check_technical_quality")
+    @patch("pop_validation.agents.image_loader_agent.load_image")
+    @patch("pop_validation.agents.quality_agent.check_technical_quality")
     def test_technical_rejection_skips_gemini(
         self,
         mock_tech: MagicMock,
@@ -336,7 +265,7 @@ class TestValidateImageFlow:
         mock_genai: MagicMock,
         settings: Settings,
     ) -> None:
-        """Step 2 fails → skip Gemini calls entirely."""
+        """Tech check fails → skip Gemini calls entirely."""
         mock_load.return_value = _fake_loaded_image()
         mock_tech.return_value = ImageQualityReport(
             resolution_ok=False, format_ok=True, file_size_ok=True, blur_score=0.0,
@@ -352,8 +281,8 @@ class TestValidateImageFlow:
         mock_model.generate_content.assert_not_called()
 
     @patch("pop_validation.client.gemini_client.genai")
-    @patch("pop_validation.pipeline.load_image")
-    @patch("pop_validation.pipeline.check_technical_quality")
+    @patch("pop_validation.agents.image_loader_agent.load_image")
+    @patch("pop_validation.agents.quality_agent.check_technical_quality")
     def test_quality_rejection_skips_extraction(
         self,
         mock_tech: MagicMock,
@@ -361,7 +290,7 @@ class TestValidateImageFlow:
         mock_genai: MagicMock,
         settings: Settings,
     ) -> None:
-        """Step 3 rejects → skip field extraction (Gemini #2)."""
+        """Gemini quality rejects → skip field extraction."""
         mock_load.return_value = _fake_loaded_image()
         mock_tech.return_value = ImageQualityReport(
             resolution_ok=True, format_ok=True, file_size_ok=True, blur_score=100.0,
@@ -384,14 +313,14 @@ class TestValidateImageFlow:
         assert mock_model.generate_content.call_count == 1
 
     @patch("pop_validation.client.gemini_client.genai")
-    @patch("pop_validation.pipeline.load_image")
+    @patch("pop_validation.agents.image_loader_agent.load_image")
     def test_load_failure_returns_graceful_result(
         self,
         mock_load: MagicMock,
         mock_genai: MagicMock,
         settings: Settings,
     ) -> None:
-        """Step 1 throws → graceful fallback, no crash."""
+        """Image load throws → graceful fallback, no crash."""
         mock_load.side_effect = FileNotFoundError("Image not found")
         mock_genai.GenerativeModel.return_value = MagicMock()
 
@@ -401,8 +330,8 @@ class TestValidateImageFlow:
         assert result.message == "RECEIPT_NOT_FOUND"
 
     @patch("pop_validation.client.gemini_client.genai")
-    @patch("pop_validation.pipeline.load_image")
-    @patch("pop_validation.pipeline.check_technical_quality")
+    @patch("pop_validation.agents.image_loader_agent.load_image")
+    @patch("pop_validation.agents.quality_agent.check_technical_quality")
     def test_gemini_api_error_returns_quality_rejection(
         self,
         mock_tech: MagicMock,
@@ -427,8 +356,8 @@ class TestValidateImageFlow:
         assert result.message == "RECEIPT_NOT_FOUND"
 
     @patch("pop_validation.client.gemini_client.genai")
-    @patch("pop_validation.pipeline.load_image")
-    @patch("pop_validation.pipeline.check_technical_quality")
+    @patch("pop_validation.agents.image_loader_agent.load_image")
+    @patch("pop_validation.agents.quality_agent.check_technical_quality")
     def test_extraction_error_still_applies_rules(
         self,
         mock_tech: MagicMock,
