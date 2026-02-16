@@ -259,17 +259,3 @@ python -m mypy src/ --strict
 python -m ruff check src/ tests/ && python -m mypy src/ --strict && python -m pytest tests/ --tb=short -q
 ```
 
----
-
-## Migration Path
-
-The pure Python agent architecture maps 1:1 to framework-based agents:
-
-| Framework | Mapping |
-|-----------|---------|
-| **Claude Agent SDK** | Each `BaseAgent` becomes an `AgentDefinition` with `@tool` decorators |
-| **Google ADK** | Each agent becomes a Google ADK `Agent` with function tools |
-| **CrewAI** | Each agent becomes a CrewAI `Agent` with `Task` definitions |
-| **LangGraph** | Each agent becomes a node in a state graph |
-
-Zero new dependencies needed today. Add a framework when you have the API keys.
